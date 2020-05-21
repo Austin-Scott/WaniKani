@@ -282,13 +282,13 @@ async function getReviewStatistics(): Promise<Array<Resource<ReviewStatistics>>>
 }
 
 function csvLine(question: string, answers: Array<string>, comment: string, instructions: string, renderAsImage: boolean): string {
-    return `${question},${answers.length == 1 ? answers[0] : '"'+answers.join(',')+'"'},${comment},${instructions},${renderAsImage ? 'Image' : 'Text'}\n`
+    return `${question},${answers.length == 1 ? answers[0] : '"'+answers.join(',')+'"'},"${comment}",${instructions},${renderAsImage ? 'Image' : 'Text'}\n`
 }
 
 const csvHeader = 'Question,Answers,Comment,Instructions,Render as\n'
 
 const maxCurrentLevel = 5
-const minIncorrectCount = 3
+const minIncorrectCount = 2
 
 async function main() {
     await loadCache()
@@ -353,16 +353,16 @@ async function main() {
 
     let leechReviewCSV = csvHeader
     leechKanjiMeaningSubjects.forEach(subject => {
-        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `View this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this Kanji?', true)
+        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this Kanji?', true)
     })
     leechKanjiReadingSubjects.forEach(subject => {
-        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `View this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this Kanji?', true)
+        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this Kanji?', true)
     })
     leechVocabularyMeaningSubjects.forEach(subject => {
-        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `View this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this vocabulary word?', true)
+        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this vocabulary word?', true)
     })
     leechVocabularyReadingSubjects.forEach(subject => {
-        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `View this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
+        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
     })
     await fs.promises.writeFile('WaniKaniLeeches.csv', leechReviewCSV)
     console.log('Done')
