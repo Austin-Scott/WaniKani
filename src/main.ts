@@ -142,7 +142,8 @@ interface ReviewStatistics {
 
 interface Assignment {
     srs_stage: number,
-    subject_id: number
+    subject_id: number,
+    subject_type: 'kanji' | 'radical' | 'vocabulary'
 }
 
 function getWaniKani<T>(path: string, params: any, ifModifiedSince: string | undefined = undefined): Promise<T | null> {
@@ -178,53 +179,33 @@ async function getSubject(id: number): Promise<Resource<Subject>> {
     })
 }
 
-async function getAssignments(subjectIds: Array<number>): Promise<Array<Resource<Assignment>>> {
-    if (subjectIds.length == 0) { return [] }
+async function getAssignments(subjectIds: Array<number>, getAllAssignments: boolean = false): Promise<Array<Resource<Assignment>>> {
+    if (!getAllAssignments && subjectIds.length == 0) { return [] }
 
-    let dateLastUpdated = await getOrInitializeCache('AssignmentsDate', () => {
-        return Promise.resolve({ date: undefined })
-    })
-    if (dateLastUpdated) {
-        dateLastUpdated = dateLastUpdated.date
+    let dateLastUpdated = await getOrInitializeCache('AssignmentsDate', () => Promise.resolve({ date: undefined }))
+    dateLastUpdated = dateLastUpdated.date
+
+    let oldAssignments: any = await getOrInitializeCache('Assignments', () => Promise.resolve({}))
+
+    let requestArgs: any = {}
+
+    if(dateLastUpdated) {
+        requestArgs['updated_after'] = dateLastUpdated
     }
 
-    let oldAssignments: any = null
-    try {
-        oldAssignments = await getOrInitializeCache('Assignments', () => {
-            return Promise.resolve({})
+    let newAssignmentsCollection = await getWaniKani<Collection<Assignment>>('assignments', requestArgs)
+    if (newAssignmentsCollection !== null) {
+        let updatedAssignments = await unwrapCollection(newAssignmentsCollection)
+        dateLastUpdated = newAssignmentsCollection.data_updated_at
+        updatedAssignments.forEach(assignment => {
+            oldAssignments[assignment.data.subject_id] = assignment
         })
-    } catch (error) {
-        console.log(error)
     }
 
-    if (!subjectIds.every(id => { return oldAssignments.hasOwnProperty(id) })) {
-        //Record is incomplete, full refresh
-        dateLastUpdated = null
-    }
-    let allSubjectIds = [...new Set(subjectIds.concat(Object.keys(oldAssignments).map(key => parseInt(key))))]
-    if (dateLastUpdated) {
-        let updatedAssignmentsCollection = await getWaniKani<Collection<Assignment>>('assignments', { updated_after: dateLastUpdated, subject_ids: allSubjectIds.join(',') }, dateLastUpdated)
-        if (updatedAssignmentsCollection !== null) {
-            let updatedAssignments = await unwrapCollection(updatedAssignmentsCollection)
-            dateLastUpdated = updatedAssignmentsCollection.data_updated_at
-            updatedAssignments.forEach(assignment => {
-                oldAssignments[assignment.data.subject_id] = assignment
-            })
-        }
-    } else {
-        let newAssignmentsCollection = await getWaniKani<Collection<Assignment>>('assignments', { subject_ids: allSubjectIds.join(',') })
-        if (newAssignmentsCollection !== null) {
-            let updatedAssignments = await unwrapCollection(newAssignmentsCollection)
-            dateLastUpdated = newAssignmentsCollection.data_updated_at
-            updatedAssignments.forEach(assignment => {
-                oldAssignments[assignment.data.subject_id] = assignment
-            })
-        }
-    }
     await setCache('AssignmentsDate', { date: dateLastUpdated })
     await setCache('Assignments', oldAssignments)
 
-    let returnKeys = Object.keys(oldAssignments).filter(key => { return subjectIds.includes(parseInt(key)) })
+    let returnKeys = getAllAssignments ? Object.keys(oldAssignments) : Object.keys(oldAssignments).filter(key => { return subjectIds.includes(parseInt(key)) })
     return returnKeys.map(key => {
         return oldAssignments[key]
     })
@@ -287,6 +268,23 @@ function csvLine(question: string, answers: Array<string>, comment: string, inst
 
 const csvHeader = 'Question,Answers,Comment,Instructions,Render as\n'
 
+function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>, kanjiReadingSubjects: Array<Resource<Subject & KanjiSubject>>, vocabularyMeaningSubjects: Array<Resource<Subject & VocabularySubject>>, vocabularyReadingSubjects: Array<Resource<Subject & VocabularySubject>>): string {
+    let csvString = csvHeader
+    kanjiMeaningSubjects.forEach(subject => {
+        csvString += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this Kanji?', true)
+    })
+    kanjiReadingSubjects.forEach(subject => {
+        csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this Kanji?', true)
+    })
+    vocabularyMeaningSubjects.forEach(subject => {
+        csvString += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this vocabulary word?', true)
+    })
+    vocabularyReadingSubjects.forEach(subject => {
+        csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
+    })
+    return csvString
+}
+
 const maxCurrentLevel = 5
 const minIncorrectCount = 2
 
@@ -294,6 +292,8 @@ async function main() {
     await loadCache()
 
     let reviewStats = await getReviewStatistics()
+
+    // Leech Kanji Meaning
 
     let leechKanjiMeaningSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'kanji' && reviewStat.data.meaning_incorrect >= minIncorrectCount
@@ -309,6 +309,8 @@ async function main() {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & KanjiSubject>>
 
+    // Leech Kanji Reading
+
     let leechKanjiReadingSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'kanji' && reviewStat.data.reading_incorrect >= minIncorrectCount
     }).map(entry => {
@@ -322,6 +324,8 @@ async function main() {
     }).map(assignment => {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & KanjiSubject>>
+
+    // Leech Vocabulary Meaning
 
     let leechVocabularyMeaningSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.meaning_incorrect >= minIncorrectCount
@@ -337,6 +341,8 @@ async function main() {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & VocabularySubject>>
 
+    // Leech Vocabulary Reading
+
     let leechVocabularyReadingSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.reading_incorrect >= minIncorrectCount
     }).map(entry => {
@@ -351,20 +357,29 @@ async function main() {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & VocabularySubject>>
 
-    let leechReviewCSV = csvHeader
-    leechKanjiMeaningSubjects.forEach(subject => {
-        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this Kanji?', true)
+    // Level One Kanji and Vocabulary
+    let allAssignments = await getAssignments([], true)
+    let levelOneKanjiSubjectIds = allAssignments.filter(assignment => {
+        return assignment.data.srs_stage == 1 && assignment.data.subject_type == 'kanji'
+    }).map(assignment => {
+        return assignment.data.subject_id
     })
-    leechKanjiReadingSubjects.forEach(subject => {
-        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this Kanji?', true)
+    let levelOneVocabularySubjectIds = allAssignments.filter(assignment => {
+        return assignment.data.srs_stage == 1 && assignment.data.subject_type == 'vocabulary'
+    }).map(assignment => {
+        return assignment.data.subject_id
     })
-    leechVocabularyMeaningSubjects.forEach(subject => {
-        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this vocabulary word?', true)
-    })
-    leechVocabularyReadingSubjects.forEach(subject => {
-        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
-    })
+
+    let levelOneKanjiSubjects = await Promise.all(levelOneKanjiSubjectIds.map(id=>getSubject(id)))
+    let levelOneVocabularySubjects = await Promise.all(levelOneVocabularySubjectIds.map(id=>getSubject(id)))
+
+
+    // Creating CSV files
+
+    let leechReviewCSV = createCSV(leechKanjiMeaningSubjects, leechKanjiReadingSubjects, leechVocabularyMeaningSubjects, leechVocabularyReadingSubjects)
+    let levelOneReviewCSV = createCSV(levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>)
+
     await fs.promises.writeFile('WaniKaniLeeches.csv', leechReviewCSV)
-    console.log('Done')
+    await fs.promises.writeFile('WaniKaniLevelOne.csv', levelOneReviewCSV)
 }
 main()
