@@ -1,9 +1,7 @@
 import fs from 'fs'
+import path from 'path'
 import axios, { AxiosResponse } from 'axios'
 import { RateLimiter } from 'limiter'
-import cacheManager from 'cache-manager'
-import fsStore from 'cache-manager-fs-binary'
-import { isMainThread } from 'worker_threads'
 
 const WaniKaniURL = 'https://api.wanikani.com/v2/'
 
@@ -12,12 +10,42 @@ const WaniKaniURL = 'https://api.wanikani.com/v2/'
 Subjects: Almost never changes.
 ReviewStatistics: Updates sometimes. 
 */
-const cache = cacheManager.caching({
-    store: fsStore,
-    ttl: 60 * 60 * 24 * 365 * 100 /* seconds, set to 100 years. Never expire. */,
-    path: 'cache',
-    fillcallback: main
-})
+let cache: any = {}
+
+async function loadCache() {
+    const files = await fs.promises.readdir('cache/')
+    for(const file in files) {
+        let key = files[file].replace('.json', '')
+        let pathname = path.join('cache', files[file])
+        let json = await fs.promises.readFile(pathname, 'utf-8')
+        let value = JSON.parse(json)
+        cache[key] = value
+    }
+
+}
+
+async function setCache(key: string, value: object) {
+    let oldCacheEntry = cache[key] || {}
+    let oldJSON = JSON.stringify(oldCacheEntry)
+    let newJSON = JSON.stringify(value)
+    if(oldJSON != newJSON) {
+        //Update required
+        let filename = `cache/${key}.json`
+        cache[key] = value
+        await fs.promises.writeFile(filename, newJSON)
+    }
+}
+
+async function getOrInitializeCache(key: string, initializer: ()=>Promise<any>): Promise<any> {
+    let currentCacheValue = cache[key]
+    if(currentCacheValue != undefined) return Promise.resolve(currentCacheValue)
+
+    let initialValue = await initializer()
+
+    await setCache(key, initialValue)
+
+    return initialValue
+}
 
 const token: string = JSON.parse(fs.readFileSync('token.json', 'utf-8')).token
 
@@ -113,7 +141,7 @@ interface ReviewStatistics {
 }
 
 interface Assignment {
-    srs_state: number,
+    srs_stage: number,
     subject_id: number
 }
 
@@ -144,8 +172,8 @@ function getWaniKani<T>(path: string, params: any, ifModifiedSince: string | und
 }
 
 async function getSubject(id: number): Promise<Resource<Subject>> {
-    let key = 'subject:' + id
-    return cache.wrap(key, () => {
+    let key = 'subject-' + id
+    return getOrInitializeCache(key, () => {
         return getWaniKani<Resource<Subject>>(`subjects/${id}`, {})
     })
 }
@@ -153,7 +181,7 @@ async function getSubject(id: number): Promise<Resource<Subject>> {
 async function getAssignments(subjectIds: Array<number>): Promise<Array<Resource<Assignment>>> {
     if (subjectIds.length == 0) { return [] }
 
-    let dateLastUpdated = await cache.wrap('AssignmentsDate', () => {
+    let dateLastUpdated = await getOrInitializeCache('AssignmentsDate', () => {
         return Promise.resolve({ date: undefined })
     })
     if (dateLastUpdated) {
@@ -162,7 +190,7 @@ async function getAssignments(subjectIds: Array<number>): Promise<Array<Resource
 
     let oldAssignments: any = null
     try {
-        oldAssignments = await cache.wrap('Assignments', () => {
+        oldAssignments = await getOrInitializeCache('Assignments', () => {
             return Promise.resolve({})
         })
     } catch (error) {
@@ -193,8 +221,8 @@ async function getAssignments(subjectIds: Array<number>): Promise<Array<Resource
             })
         }
     }
-    await cache.set('AssignmentsDate', { date: dateLastUpdated }, { ttl: 60 * 60 * 24 * 365 * 100 })
-    await cache.set('Assignments', oldAssignments, { ttl: 60 * 60 * 24 * 365 * 100 })
+    await setCache('AssignmentsDate', { date: dateLastUpdated })
+    await setCache('Assignments', oldAssignments)
 
     let returnKeys = Object.keys(oldAssignments).filter(key => { return subjectIds.includes(parseInt(key)) })
     return returnKeys.map(key => {
@@ -219,13 +247,13 @@ async function unwrapCollection<T>(pageOne: Collection<T>): Promise<Array<Resour
 }
 
 async function getReviewStatistics(): Promise<Array<Resource<ReviewStatistics>>> {
-    let dateLastUpdated = await cache.wrap('reviewStatsDate', () => {
+    let dateLastUpdated = await getOrInitializeCache('reviewStatsDate', () => {
         return Promise.resolve({ date: undefined })
     })
     if (dateLastUpdated) {
         dateLastUpdated = dateLastUpdated.date
     }
-    let oldReviewStatistics = await cache.wrap('reviewStats', () => {
+    let oldReviewStatistics = await getOrInitializeCache('reviewStats', () => {
         return Promise.resolve({})
     })
     if (dateLastUpdated) {
@@ -247,16 +275,24 @@ async function getReviewStatistics(): Promise<Array<Resource<ReviewStatistics>>>
             })
         }
     }
-    await cache.set('reviewStatsDate', { date: dateLastUpdated }, { ttl: 60 * 60 * 24 * 365 * 100 })
-    await cache.set('reviewStats', oldReviewStatistics, { ttl: 60 * 60 * 24 * 365 * 100 })
+    await setCache('reviewStatsDate', { date: dateLastUpdated })
+    await setCache('reviewStats', oldReviewStatistics)
 
     return Object.values(oldReviewStatistics)
 }
 
-const maxCurrentLevel = 2
+function csvLine(question: string, answers: Array<string>, comment: string, instructions: string, renderAsImage: boolean): string {
+    return `${question},${answers.length == 1 ? answers[0] : '"'+answers.join(',')+'"'},${comment},${instructions},${renderAsImage ? 'Image' : 'Text'}\n`
+}
+
+const csvHeader = 'Question,Answers,Comment,Instructions,Render as\n'
+
+const maxCurrentLevel = 5
 const minIncorrectCount = 3
 
 async function main() {
+    await loadCache()
+
     let reviewStats = await getReviewStatistics()
 
     let leechKanjiMeaningSubjectIds = reviewStats.filter(reviewStat => {
@@ -266,7 +302,12 @@ async function main() {
     })
 
     let leechKanjiMeaningAssignments = await getAssignments(leechKanjiMeaningSubjectIds)
-    console.log(leechKanjiMeaningAssignments)
+
+    let leechKanjiMeaningSubjects = await Promise.all(leechKanjiMeaningAssignments.filter(assignment => {
+        return assignment.data.srs_stage <= maxCurrentLevel
+    }).map(assignment => {
+        return getSubject(assignment.data.subject_id)
+    })) as Array<Resource<Subject & KanjiSubject>>
 
     let leechKanjiReadingSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'kanji' && reviewStat.data.reading_incorrect >= minIncorrectCount
@@ -275,7 +316,12 @@ async function main() {
     })
 
     let leechKanjiReadingAssignments = await getAssignments(leechKanjiReadingSubjectIds)
-    console.log(leechKanjiReadingAssignments)
+
+    let leechKanjiReadingSubjects = await Promise.all(leechKanjiReadingAssignments.filter(assignment => {
+        return assignment.data.srs_stage <= maxCurrentLevel
+    }).map(assignment => {
+        return getSubject(assignment.data.subject_id)
+    })) as Array<Resource<Subject & KanjiSubject>>
 
     let leechVocabularyMeaningSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.meaning_incorrect >= minIncorrectCount
@@ -284,7 +330,12 @@ async function main() {
     })
 
     let leechVocabularyMeaningAssignments = await getAssignments(leechVocabularyMeaningSubjectIds)
-    console.log(leechVocabularyMeaningAssignments)
+
+    let leechVocabularyMeaningSubjects = await Promise.all(leechVocabularyMeaningAssignments.filter(assignment => {
+        return assignment.data.srs_stage <= maxCurrentLevel
+    }).map(assignment => {
+        return getSubject(assignment.data.subject_id)
+    })) as Array<Resource<Subject & VocabularySubject>>
 
     let leechVocabularyReadingSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.reading_incorrect >= minIncorrectCount
@@ -293,6 +344,27 @@ async function main() {
     })
 
     let leechVocabularyReadingAssignments = await getAssignments(leechVocabularyReadingSubjectIds)
-    console.log(leechVocabularyReadingAssignments)
 
+    let leechVocabularyReadingSubjects = await Promise.all(leechVocabularyReadingAssignments.filter(assignment => {
+        return assignment.data.srs_stage <= maxCurrentLevel
+    }).map(assignment => {
+        return getSubject(assignment.data.subject_id)
+    })) as Array<Resource<Subject & VocabularySubject>>
+
+    let leechReviewCSV = csvHeader
+    leechKanjiMeaningSubjects.forEach(subject => {
+        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `View this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this Kanji?', true)
+    })
+    leechKanjiReadingSubjects.forEach(subject => {
+        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `View this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this Kanji?', true)
+    })
+    leechVocabularyMeaningSubjects.forEach(subject => {
+        leechReviewCSV += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `View this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this vocabulary word?', true)
+    })
+    leechVocabularyReadingSubjects.forEach(subject => {
+        leechReviewCSV += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `View this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
+    })
+    await fs.promises.writeFile('WaniKaniLeeches.csv', leechReviewCSV)
+    console.log('Done')
 }
+main()
