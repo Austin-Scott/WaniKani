@@ -112,13 +112,18 @@ interface ReviewStatistics {
     subject_type: 'kanji' | 'radical' | 'vocabulary'
 }
 
+interface Assignment {
+    srs_state: number,
+    subject_id: number
+}
+
 function getWaniKani<T>(path: string, params: any, ifModifiedSince: string | undefined = undefined): Promise<T | null> {
     return new Promise<T | null>((resolve, reject) => {
         limiter.removeTokens(1, (err, remainingRequests) => {
             let headers: any = {
                 Authorization: 'Bearer ' + token
             }
-            if(ifModifiedSince !== undefined) {
+            if (ifModifiedSince !== undefined) {
                 headers['If-Modified-Since'] = ifModifiedSince
             }
             axios.get(`${WaniKaniURL}${path}`, {
@@ -126,7 +131,7 @@ function getWaniKani<T>(path: string, params: any, ifModifiedSince: string | und
                 params: params
             })
                 .then(response => {
-                    if(response.status == 304) {
+                    if (response.status == 304) {
                         // The information has not changed since the last request
                         resolve(null)
                     } else {
@@ -139,19 +144,71 @@ function getWaniKani<T>(path: string, params: any, ifModifiedSince: string | und
 }
 
 async function getSubject(id: number): Promise<Resource<Subject>> {
-    let key = 'subject:'+id
-    return cache.wrap(key, ()=>{
+    let key = 'subject:' + id
+    return cache.wrap(key, () => {
         return getWaniKani<Resource<Subject>>(`subjects/${id}`, {})
+    })
+}
+
+async function getAssignments(subjectIds: Array<number>): Promise<Array<Resource<Assignment>>> {
+    if (subjectIds.length == 0) { return [] }
+
+    let dateLastUpdated = await cache.wrap('AssignmentsDate', () => {
+        return Promise.resolve({ date: undefined })
+    })
+    if (dateLastUpdated) {
+        dateLastUpdated = dateLastUpdated.date
+    }
+
+    let oldAssignments: any = null
+    try {
+        oldAssignments = await cache.wrap('Assignments', () => {
+            return Promise.resolve({})
+        })
+    } catch (error) {
+        console.log(error)
+    }
+
+    if (!subjectIds.every(id => { return oldAssignments.hasOwnProperty(id) })) {
+        //Record is incomplete, full refresh
+        dateLastUpdated = null
+    }
+    let allSubjectIds = [...new Set(subjectIds.concat(Object.keys(oldAssignments).map(key => parseInt(key))))]
+    if (dateLastUpdated) {
+        let updatedAssignmentsCollection = await getWaniKani<Collection<Assignment>>('assignments', { updated_after: dateLastUpdated, subject_ids: allSubjectIds.join(',') }, dateLastUpdated)
+        if (updatedAssignmentsCollection !== null) {
+            let updatedAssignments = await unwrapCollection(updatedAssignmentsCollection)
+            dateLastUpdated = updatedAssignmentsCollection.data_updated_at
+            updatedAssignments.forEach(assignment => {
+                oldAssignments[assignment.data.subject_id] = assignment
+            })
+        }
+    } else {
+        let newAssignmentsCollection = await getWaniKani<Collection<Assignment>>('assignments', { subject_ids: allSubjectIds.join(',') })
+        if (newAssignmentsCollection !== null) {
+            let updatedAssignments = await unwrapCollection(newAssignmentsCollection)
+            dateLastUpdated = newAssignmentsCollection.data_updated_at
+            updatedAssignments.forEach(assignment => {
+                oldAssignments[assignment.data.subject_id] = assignment
+            })
+        }
+    }
+    await cache.set('AssignmentsDate', { date: dateLastUpdated }, { ttl: 60 * 60 * 24 * 365 * 100 })
+    await cache.set('Assignments', oldAssignments, { ttl: 60 * 60 * 24 * 365 * 100 })
+
+    let returnKeys = Object.keys(oldAssignments).filter(key => { return subjectIds.includes(parseInt(key)) })
+    return returnKeys.map(key => {
+        return oldAssignments[key]
     })
 }
 
 async function unwrapCollection<T>(pageOne: Collection<T>): Promise<Array<Resource<T>>> {
     let result: Array<Resource<T>> = pageOne.data
     let currentPage = pageOne
-    while(currentPage.pages.next_url != null) {
+    while (currentPage.pages.next_url != null) {
         let requestPath = currentPage.pages.next_url.replace(WaniKaniURL, '')
         let nextPage = await getWaniKani<Collection<T>>(requestPath, {})
-        if(nextPage != null) {
+        if (nextPage != null) {
             result = result.concat(nextPage.data)
             currentPage = nextPage
         } else {
@@ -162,18 +219,18 @@ async function unwrapCollection<T>(pageOne: Collection<T>): Promise<Array<Resour
 }
 
 async function getReviewStatistics(): Promise<Array<Resource<ReviewStatistics>>> {
-    let dateLastUpdated = await cache.wrap('reviewStatsDate', ()=> {
-        return Promise.resolve({date: undefined})
+    let dateLastUpdated = await cache.wrap('reviewStatsDate', () => {
+        return Promise.resolve({ date: undefined })
     })
-    if(dateLastUpdated) {
+    if (dateLastUpdated) {
         dateLastUpdated = dateLastUpdated.date
     }
-    let oldReviewStatistics = await cache.wrap('reviewStats', ()=>{
+    let oldReviewStatistics = await cache.wrap('reviewStats', () => {
         return Promise.resolve({})
     })
-    if(dateLastUpdated) {
+    if (dateLastUpdated) {
         let updatedReviewStatsCollection = await getWaniKani<Collection<ReviewStatistics>>('review_statistics', { updated_after: dateLastUpdated }, dateLastUpdated)
-        if(updatedReviewStatsCollection !== null) {
+        if (updatedReviewStatsCollection !== null) {
             let updatedReviewStats = await unwrapCollection(updatedReviewStatsCollection)
             dateLastUpdated = updatedReviewStatsCollection.data_updated_at
             updatedReviewStats.forEach(reviewStat => {
@@ -182,7 +239,7 @@ async function getReviewStatistics(): Promise<Array<Resource<ReviewStatistics>>>
         }
     } else {
         let newReviewCollection = await getWaniKani<Collection<ReviewStatistics>>('review_statistics', {})
-        if(newReviewCollection !== null) {
+        if (newReviewCollection !== null) {
             let updatedReviewStats = await unwrapCollection(newReviewCollection)
             dateLastUpdated = newReviewCollection.data_updated_at
             updatedReviewStats.forEach(reviewStat => {
@@ -190,41 +247,52 @@ async function getReviewStatistics(): Promise<Array<Resource<ReviewStatistics>>>
             })
         }
     }
-    await cache.set('reviewStatsDate', { date: dateLastUpdated }, { ttl: 60 * 60 * 24 * 365 * 100})
-    await cache.set('reviewStats', oldReviewStatistics, { ttl: 60 * 60 * 24 * 365 * 100})
+    await cache.set('reviewStatsDate', { date: dateLastUpdated }, { ttl: 60 * 60 * 24 * 365 * 100 })
+    await cache.set('reviewStats', oldReviewStatistics, { ttl: 60 * 60 * 24 * 365 * 100 })
 
     return Object.values(oldReviewStatistics)
 }
 
-const maxCurrentStreak = 2
+const maxCurrentLevel = 2
 const minIncorrectCount = 3
 
 async function main() {
     let reviewStats = await getReviewStatistics()
 
-    let leechKanjiMeanings = await Promise.all(reviewStats.filter(reviewStat => {
-        return reviewStat.data.subject_type == 'kanji' && reviewStat.data.meaning_current_streak <= maxCurrentStreak && reviewStat.data.meaning_incorrect >= minIncorrectCount
+    let leechKanjiMeaningSubjectIds = reviewStats.filter(reviewStat => {
+        return reviewStat.data.subject_type == 'kanji' && reviewStat.data.meaning_incorrect >= minIncorrectCount
     }).map(entry => {
-        return getSubject(entry.data.subject_id)
-    })) as Array<Resource<Subject & KanjiSubject>>
+        return entry.data.subject_id
+    })
 
-    let leechKanjiReadings = await Promise.all(reviewStats.filter(reviewStat => {
-        return reviewStat.data.subject_type == 'kanji' && reviewStat.data.reading_current_streak <= maxCurrentStreak && reviewStat.data.reading_incorrect >= minIncorrectCount
+    let leechKanjiMeaningAssignments = await getAssignments(leechKanjiMeaningSubjectIds)
+    console.log(leechKanjiMeaningAssignments)
+
+    let leechKanjiReadingSubjectIds = reviewStats.filter(reviewStat => {
+        return reviewStat.data.subject_type == 'kanji' && reviewStat.data.reading_incorrect >= minIncorrectCount
     }).map(entry => {
-        return getSubject(entry.data.subject_id)
-    })) as Array<Resource<Subject & KanjiSubject>>
+        return entry.data.subject_id
+    })
 
-    let leechVocabularyMeanings = await Promise.all(reviewStats.filter(reviewStat => {
-        return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.meaning_current_streak <= maxCurrentStreak && reviewStat.data.meaning_incorrect >= minIncorrectCount
+    let leechKanjiReadingAssignments = await getAssignments(leechKanjiReadingSubjectIds)
+    console.log(leechKanjiReadingAssignments)
+
+    let leechVocabularyMeaningSubjectIds = reviewStats.filter(reviewStat => {
+        return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.meaning_incorrect >= minIncorrectCount
     }).map(entry => {
-        return getSubject(entry.data.subject_id)
-    })) as Array<Resource<Subject & VocabularySubject>>
+        return entry.data.subject_id
+    })
 
-    let leechVocabularyReadings = await Promise.all(reviewStats.filter(reviewStat => {
-        return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.reading_current_streak <= maxCurrentStreak && reviewStat.data.reading_incorrect >= minIncorrectCount
+    let leechVocabularyMeaningAssignments = await getAssignments(leechVocabularyMeaningSubjectIds)
+    console.log(leechVocabularyMeaningAssignments)
+
+    let leechVocabularyReadingSubjectIds = reviewStats.filter(reviewStat => {
+        return reviewStat.data.subject_type == 'vocabulary' && reviewStat.data.reading_incorrect >= minIncorrectCount
     }).map(entry => {
-        return getSubject(entry.data.subject_id)
-    })) as Array<Resource<Subject & VocabularySubject>>
+        return entry.data.subject_id
+    })
 
-    console.log(leechKanjiMeanings)
+    let leechVocabularyReadingAssignments = await getAssignments(leechVocabularyReadingSubjectIds)
+    console.log(leechVocabularyReadingAssignments)
+
 }
