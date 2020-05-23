@@ -289,12 +289,17 @@ const maxCurrentLevel = 5
 const minIncorrectCount = 2
 
 async function main() {
+    process.stdout.write('Loading cache from disk... ')
     await loadCache()
+    console.log('Done!\n')
 
+    process.stdout.write('Downloading new review statistics... ')
     let reviewStats = await getReviewStatistics()
+    console.log('Done!\n')
 
     // Leech Kanji Meaning
 
+    console.log('Detecting leeches... ')
     let leechKanjiMeaningSubjectIds = reviewStats.filter(reviewStat => {
         return reviewStat.data.subject_type == 'kanji' && reviewStat.data.meaning_incorrect >= minIncorrectCount
     }).map(entry => {
@@ -308,6 +313,7 @@ async function main() {
     }).map(assignment => {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & KanjiSubject>>
+    console.log(`...${leechKanjiMeaningSubjects.length} kanji meaning leeches detected...`)
 
     // Leech Kanji Reading
 
@@ -324,6 +330,7 @@ async function main() {
     }).map(assignment => {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & KanjiSubject>>
+    console.log(`...${leechKanjiReadingSubjects.length} kanji reading leeches detected...`)
 
     // Leech Vocabulary Meaning
 
@@ -340,6 +347,7 @@ async function main() {
     }).map(assignment => {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & VocabularySubject>>
+    console.log(`...${leechVocabularyMeaningSubjects.length} vocabulary meaning leeches detected...`)
 
     // Leech Vocabulary Reading
 
@@ -356,8 +364,11 @@ async function main() {
     }).map(assignment => {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & VocabularySubject>>
+    console.log(`...${leechVocabularyReadingSubjects.length} vocabulary reading leeches detected...`)
+    console.log('...Done!\n')
 
     // Level One Kanji and Vocabulary
+    console.log('Retrieving level one SRS kanji and vocabulary...')
     let allAssignments = await getAssignments([], true)
     let levelOneKanjiSubjectIds = allAssignments.filter(assignment => {
         return assignment.data.srs_stage == 1 && assignment.data.subject_type == 'kanji'
@@ -371,15 +382,22 @@ async function main() {
     })
 
     let levelOneKanjiSubjects = await Promise.all(levelOneKanjiSubjectIds.map(id=>getSubject(id)))
+    console.log(`...${levelOneKanjiSubjects.length} level one kanji subjects retrieved...`)
+
     let levelOneVocabularySubjects = await Promise.all(levelOneVocabularySubjectIds.map(id=>getSubject(id)))
+    console.log(`...${levelOneVocabularySubjects.length} level one vocabulary subjects retrieved...`)
+    console.log('...Done!\n')
 
 
     // Creating CSV files
+    console.log('Generating and writing decks...')
 
     let leechReviewCSV = createCSV(leechKanjiMeaningSubjects, leechKanjiReadingSubjects, leechVocabularyMeaningSubjects, leechVocabularyReadingSubjects)
     let levelOneReviewCSV = createCSV(levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>)
 
     await fs.promises.writeFile('WaniKaniLeeches.csv', leechReviewCSV)
     await fs.promises.writeFile('WaniKaniLevelOne.csv', levelOneReviewCSV)
+
+    console.log('...Done!\n')
 }
 main()
