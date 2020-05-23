@@ -5,16 +5,14 @@
   "main": "main.js",
   "scripts": {
     "build": "tsc",
+    "start": "node ./dist/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Austin Scott",
   "license": "MIT",
   "dependencies": {
-    "@types/cache-manager": "^2.10.3",
     "@types/node": "^14.0.4",
     "axios": "^0.19.2",
-    "cache-manager": "^3.3.0",
-    "cache-manager-fs-binary": "^1.0.4",
     "limiter": "^1.1.5"
   }
 }
