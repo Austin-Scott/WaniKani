@@ -49,8 +49,8 @@ async function getOrInitializeCache(key: string, initializer: ()=>Promise<any>):
 
 const token: string = JSON.parse(fs.readFileSync('token.json', 'utf-8')).token
 
-// Note: We are not allowed to make more than 60 requests per minute
-const limiter = new RateLimiter(60, 'minute')
+// Note: We are not allowed to make more than 59 requests per minute
+const limiter = new RateLimiter(59, 'minute')
 
 interface Resource<T> {
     id: number,
@@ -122,6 +122,14 @@ interface VocabularySubject {
     parts_of_speech: Array<string>,
     readings: Array<VocabularyReading>,
     reading_mnemonic: string
+}
+
+interface CharacterImage {
+    url: string
+}
+
+interface RadicalSubject {
+    character_images: Array<CharacterImage>
 }
 
 interface ReviewStatistics {
@@ -268,7 +276,7 @@ function csvLine(question: string, answers: Array<string>, comment: string, inst
 
 const csvHeader = 'Question,Answers,Comment,Instructions,Render as\n'
 
-function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>, kanjiReadingSubjects: Array<Resource<Subject & KanjiSubject>>, vocabularyMeaningSubjects: Array<Resource<Subject & VocabularySubject>>, vocabularyReadingSubjects: Array<Resource<Subject & VocabularySubject>>): string {
+function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>, kanjiReadingSubjects: Array<Resource<Subject & KanjiSubject>>, vocabularyMeaningSubjects: Array<Resource<Subject & VocabularySubject>>, vocabularyReadingSubjects: Array<Resource<Subject & VocabularySubject>>, radicalMeaningSubjects: Array<Resource<Subject & RadicalSubject>>): string {
     let csvString = csvHeader
     kanjiMeaningSubjects.forEach(subject => {
         csvString += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this Kanji?', true)
@@ -281,6 +289,9 @@ function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>
     })
     vocabularyReadingSubjects.forEach(subject => {
         csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
+    })
+    radicalMeaningSubjects.forEach(subject => {
+        csvString += csvLine(subject.data.character_images[0].url, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this radical?', false)
     })
     return csvString
 }
@@ -365,9 +376,26 @@ async function main() {
         return getSubject(assignment.data.subject_id)
     })) as Array<Resource<Subject & VocabularySubject>>
     console.log(`...${leechVocabularyReadingSubjects.length} vocabulary reading leeches detected...`)
+
+    // Leech Radical Meaning
+
+    let leechRadicalMeaningSubjectIds = reviewStats.filter(reviewStat => {
+        return reviewStat.data.subject_type == 'radical' && reviewStat.data.reading_incorrect >= minIncorrectCount
+    }).map(entry => {
+        return entry.data.subject_id
+    })
+
+    let leechRadicalMeaningAssignments = await getAssignments(leechRadicalMeaningSubjectIds)
+
+    let leechRadicalMeaningSubjects = await Promise.all(leechRadicalMeaningAssignments.filter(assignment => {
+        return assignment.data.srs_stage <= maxCurrentLevel
+    }).map(assignment => {
+        return getSubject(assignment.data.subject_id)
+    })) as Array<Resource<Subject & RadicalSubject>>
+    console.log(`...${leechRadicalMeaningSubjects.length} radical meaning leeches detected...`)
     console.log('...Done!\n')
 
-    // Level One Kanji and Vocabulary
+    // Level One Kanji, Vocabulary, and Radicals
     console.log('Retrieving level one SRS kanji and vocabulary...')
     let allAssignments = await getAssignments([], true)
     let levelOneKanjiSubjectIds = allAssignments.filter(assignment => {
@@ -380,20 +408,28 @@ async function main() {
     }).map(assignment => {
         return assignment.data.subject_id
     })
+    let levelOneRadicalSubjectIds = allAssignments.filter(assignment => {
+        return assignment.data.srs_stage == 1 && assignment.data.subject_type == 'radical'
+    }).map(assignment => {
+        return assignment.data.subject_id
+    })
 
     let levelOneKanjiSubjects = await Promise.all(levelOneKanjiSubjectIds.map(id=>getSubject(id)))
     console.log(`...${levelOneKanjiSubjects.length} level one kanji subjects retrieved...`)
 
     let levelOneVocabularySubjects = await Promise.all(levelOneVocabularySubjectIds.map(id=>getSubject(id)))
     console.log(`...${levelOneVocabularySubjects.length} level one vocabulary subjects retrieved...`)
+
+    let levelOneRadicalSubjects = await Promise.all(levelOneRadicalSubjectIds.map(id=>getSubject(id)))
+    console.log(`...${levelOneRadicalSubjects.length} level one radical subjects retrieved...`)
     console.log('...Done!\n')
 
 
     // Creating CSV files
     console.log('Generating and writing decks...')
 
-    let leechReviewCSV = createCSV(leechKanjiMeaningSubjects, leechKanjiReadingSubjects, leechVocabularyMeaningSubjects, leechVocabularyReadingSubjects)
-    let levelOneReviewCSV = createCSV(levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>)
+    let leechReviewCSV = createCSV(leechKanjiMeaningSubjects, leechKanjiReadingSubjects, leechVocabularyMeaningSubjects, leechVocabularyReadingSubjects, leechRadicalMeaningSubjects)
+    let levelOneReviewCSV = createCSV(levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>, levelOneRadicalSubjects as Array<Resource<Subject & RadicalSubject>>)
 
     await fs.promises.writeFile('WaniKaniLeeches.csv', leechReviewCSV)
     await fs.promises.writeFile('WaniKaniLevelOne.csv', levelOneReviewCSV)
