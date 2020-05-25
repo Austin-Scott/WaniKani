@@ -125,7 +125,8 @@ interface VocabularySubject {
 }
 
 interface CharacterImage {
-    url: string
+    url: string,
+    content_type: 'image/png' | 'image/svg+xml'
 }
 
 interface RadicalSubject {
@@ -291,7 +292,7 @@ function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>
         csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
     })
     radicalMeaningSubjects.forEach(subject => {
-        csvString += csvLine(subject.data.character_images[0].url, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this radical?', false)
+        csvString += csvLine(subject.data.character_images.filter(image => image.content_type == 'image/png')[0].url, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this radical?', false)
     })
     return csvString
 }
