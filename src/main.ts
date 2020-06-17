@@ -36,6 +36,10 @@ async function setCache(key: string, value: object) {
     }
 }
 
+function getCacheValueIfSet(key: string): any | null {
+    return cache[key] || null
+}
+
 async function getOrInitializeCache(key: string, initializer: ()=>Promise<any>): Promise<any> {
     let currentCacheValue = cache[key]
     if(currentCacheValue != undefined) return Promise.resolve(currentCacheValue)
@@ -181,11 +185,20 @@ function getWaniKani<T>(path: string, params: any, ifModifiedSince: string | und
     })
 }
 
-async function getSubject(id: number): Promise<Resource<Subject>> {
-    let key = 'subject-' + id
-    return getOrInitializeCache(key, () => {
-        return getWaniKani<Resource<Subject>>(`subjects/${id}`, {})
-    })
+async function getSubjects(ids: Array<number>): Promise<Array<Resource<Subject>>> {
+    let subjectIdsNotCached: Array<number> = ids.filter(id => getCacheValueIfSet(`subject-${id}`) == null)
+    if(subjectIdsNotCached.length > 0) {
+        const newAssignmentsCollection = await getWaniKani<Collection<Subject>>('subjects', { ids: subjectIdsNotCached.join(',')})
+        if(newAssignmentsCollection != null) {
+            const newSubjects = await unwrapCollection(newAssignmentsCollection)
+            for(const subject of newSubjects) {
+                await setCache(`subject-${subject.id}`, subject)
+            }
+        } else {
+            throw Error('Assignments collection was null')
+        }
+    }
+    return ids.map(id => getCacheValueIfSet(`subject-${id}`) as Resource<Subject>)
 }
 
 async function getAssignments(subjectIds: Array<number>, getAllAssignments: boolean = false): Promise<Array<Resource<Assignment>>> {
@@ -324,10 +337,10 @@ async function main() {
 
     let leechKanjiMeaningAssignments = await getAssignments(leechKanjiMeaningSubjectIds)
 
-    let leechKanjiMeaningSubjects = await Promise.all(leechKanjiMeaningAssignments.filter(assignment => {
+    let leechKanjiMeaningSubjects = await getSubjects(leechKanjiMeaningAssignments.filter(assignment => {
         return assignment.data.srs_stage <= maxCurrentLevel
     }).map(assignment => {
-        return getSubject(assignment.data.subject_id)
+        return assignment.data.subject_id
     })) as Array<Resource<Subject & KanjiSubject>>
     console.log(`...${leechKanjiMeaningSubjects.length} kanji meaning leeches detected...`)
 
@@ -341,10 +354,10 @@ async function main() {
 
     let leechKanjiReadingAssignments = await getAssignments(leechKanjiReadingSubjectIds)
 
-    let leechKanjiReadingSubjects = await Promise.all(leechKanjiReadingAssignments.filter(assignment => {
+    let leechKanjiReadingSubjects = await getSubjects(leechKanjiReadingAssignments.filter(assignment => {
         return assignment.data.srs_stage <= maxCurrentLevel
     }).map(assignment => {
-        return getSubject(assignment.data.subject_id)
+        return assignment.data.subject_id
     })) as Array<Resource<Subject & KanjiSubject>>
     console.log(`...${leechKanjiReadingSubjects.length} kanji reading leeches detected...`)
 
@@ -358,10 +371,10 @@ async function main() {
 
     let leechVocabularyMeaningAssignments = await getAssignments(leechVocabularyMeaningSubjectIds)
 
-    let leechVocabularyMeaningSubjects = await Promise.all(leechVocabularyMeaningAssignments.filter(assignment => {
+    let leechVocabularyMeaningSubjects = await getSubjects(leechVocabularyMeaningAssignments.filter(assignment => {
         return assignment.data.srs_stage <= maxCurrentLevel
     }).map(assignment => {
-        return getSubject(assignment.data.subject_id)
+        return assignment.data.subject_id
     })) as Array<Resource<Subject & VocabularySubject>>
     console.log(`...${leechVocabularyMeaningSubjects.length} vocabulary meaning leeches detected...`)
 
@@ -375,10 +388,10 @@ async function main() {
 
     let leechVocabularyReadingAssignments = await getAssignments(leechVocabularyReadingSubjectIds)
 
-    let leechVocabularyReadingSubjects = await Promise.all(leechVocabularyReadingAssignments.filter(assignment => {
+    let leechVocabularyReadingSubjects = await getSubjects(leechVocabularyReadingAssignments.filter(assignment => {
         return assignment.data.srs_stage <= maxCurrentLevel
     }).map(assignment => {
-        return getSubject(assignment.data.subject_id)
+        return assignment.data.subject_id
     })) as Array<Resource<Subject & VocabularySubject>>
     console.log(`...${leechVocabularyReadingSubjects.length} vocabulary reading leeches detected...`)
 
@@ -392,10 +405,10 @@ async function main() {
 
     let leechRadicalMeaningAssignments = await getAssignments(leechRadicalMeaningSubjectIds)
 
-    let leechRadicalMeaningSubjects = await Promise.all(leechRadicalMeaningAssignments.filter(assignment => {
+    let leechRadicalMeaningSubjects = await getSubjects(leechRadicalMeaningAssignments.filter(assignment => {
         return assignment.data.srs_stage <= maxCurrentLevel
     }).map(assignment => {
-        return getSubject(assignment.data.subject_id)
+        return assignment.data.subject_id
     })) as Array<Resource<Subject & RadicalSubject>>
     console.log(`...${leechRadicalMeaningSubjects.length} radical meaning leeches detected...`)
     console.log('...Done!\n')
@@ -419,13 +432,13 @@ async function main() {
         return assignment.data.subject_id
     })
 
-    let levelOneKanjiSubjects = await Promise.all(levelOneKanjiSubjectIds.map(id=>getSubject(id)))
+    let levelOneKanjiSubjects = await getSubjects(levelOneKanjiSubjectIds)
     console.log(`...${levelOneKanjiSubjects.length} level one kanji subjects retrieved...`)
 
-    let levelOneVocabularySubjects = await Promise.all(levelOneVocabularySubjectIds.map(id=>getSubject(id)))
+    let levelOneVocabularySubjects = await getSubjects(levelOneVocabularySubjectIds)
     console.log(`...${levelOneVocabularySubjects.length} level one vocabulary subjects retrieved...`)
 
-    let levelOneRadicalSubjects = await Promise.all(levelOneRadicalSubjectIds.map(id=>getSubject(id)))
+    let levelOneRadicalSubjects = await getSubjects(levelOneRadicalSubjectIds)
     console.log(`...${levelOneRadicalSubjects.length} level one radical subjects retrieved...`)
     console.log('...Done!\n')
 
