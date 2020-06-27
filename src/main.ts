@@ -159,6 +159,12 @@ interface Assignment {
     subject_type: 'kanji' | 'radical' | 'vocabulary'
 }
 
+interface KaniWani {
+    english_words: Array<string>
+    japanese_words: Array<string>
+    primary_answer: Resource<Subject & VocabularySubject>
+}
+
 function getWaniKani<T>(path: string, params: any, ifModifiedSince: string | undefined = undefined): Promise<T | null> {
     return new Promise<T | null>((resolve, reject) => {
         limiter.removeTokens(1, (err, remainingRequests) => {
@@ -290,7 +296,7 @@ function csvLine(question: string, answers: Array<string>, comment: string, inst
 
 const csvHeader = 'Question,Answers,Comment,Instructions,Render as\n'
 
-function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>, kanjiReadingSubjects: Array<Resource<Subject & KanjiSubject>>, vocabularyMeaningSubjects: Array<Resource<Subject & VocabularySubject>>, vocabularyReadingSubjects: Array<Resource<Subject & VocabularySubject>>, radicalMeaningSubjects: Array<Resource<Subject & RadicalSubject>>): string {
+function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>, kanjiReadingSubjects: Array<Resource<Subject & KanjiSubject>>, vocabularyMeaningSubjects: Array<Resource<Subject & VocabularySubject>>, vocabularyReadingSubjects: Array<Resource<Subject & VocabularySubject>>, radicalMeaningSubjects: Array<Resource<Subject & RadicalSubject>>, kaniWanis: Array<KaniWani>): string {
     let csvString = csvHeader
     kanjiMeaningSubjects.forEach(subject => {
         csvString += csvLine(subject.data.characters, subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the *meaning* of this **Kanji**?', true)
@@ -310,6 +316,9 @@ function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>
         } else {
             csvString += csvLine(subject.data.characters, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the *meaning* of this **radical**?', true)
         }
+    })
+    kaniWanis.forEach(kaniWani => {
+        csvString += csvLine(kaniWani.english_words.length == 1 ? kaniWani.english_words[0] : '"'+kaniWani.english_words.join(', ')+'"', kaniWani.japanese_words, `Readings: ${kaniWani.primary_answer.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${kaniWani.primary_answer.data.document_url}>`, 'Translate the following into a Japanese word.', false)
     })
     return csvString
 }
@@ -431,6 +440,11 @@ async function main() {
     }).map(assignment => {
         return assignment.data.subject_id
     })
+    let enlightenedVocabularySubjectIds = allAssignments.filter(assignment => {
+        return assignment.data.srs_stage >= 8 && assignment.data.subject_type == 'vocabulary'
+    }).map(assignment => {
+        return assignment.data.subject_id
+    })
 
     let levelOneKanjiSubjects = await getSubjects(levelOneKanjiSubjectIds)
     console.log(`...${levelOneKanjiSubjects.length} level one kanji subjects retrieved...`)
@@ -440,6 +454,10 @@ async function main() {
 
     let levelOneRadicalSubjects = await getSubjects(levelOneRadicalSubjectIds)
     console.log(`...${levelOneRadicalSubjects.length} level one radical subjects retrieved...`)
+
+    let enlightenedVocabularySubjects = await getSubjects(enlightenedVocabularySubjectIds) as Array<Resource<Subject & VocabularySubject>>
+    console.log(`...${enlightenedVocabularySubjects.length} enlightened or higher vocabulary subjects retrieved...`)
+    
     console.log('...Done!\n')
 
     const radicalMeaningSubjects = levelOneRadicalSubjects.concat(leechRadicalMeaningSubjects) as Array<Resource<Subject & RadicalSubject>>
@@ -455,23 +473,68 @@ async function main() {
     console.log(`${vocabularyMeaningSubjects.length} vocabulary meanings need extra review.`)
     
     const vocabularyReadingSubjects = levelOneVocabularySubjects.concat(leechVocabularyReadingSubjects) as Array<Resource<Subject & VocabularySubject>>
-    console.log(`${vocabularyReadingSubjects.length} vocabulary readings need extra review.`)
+    console.log(`${vocabularyReadingSubjects.length} vocabulary readings need extra review.\n`)
+
+    console.log('Building Kani-Wani...')
+    let kaniWani: Array<KaniWani> = []
+    for(let i=0;i<enlightenedVocabularySubjects.length;i++) {
+        const vocab = enlightenedVocabularySubjects[i]
+        let result: KaniWani = {
+            japanese_words: [vocab.data.characters],
+            primary_answer: vocab,
+            english_words: vocab.data.meanings.map(meaning => meaning.meaning).concat(vocab.data.auxiliary_meanings.map(meaning => meaning.meaning))
+        }
+        for(let j=0;j<enlightenedVocabularySubjects.length;j++) {
+            if(i!=j) {
+                const otherVocab = enlightenedVocabularySubjects[j]
+                const otherVocabMeanings = otherVocab.data.meanings.map(meaning => meaning.meaning).concat(otherVocab.data.auxiliary_meanings.map(meaning => meaning.meaning))
+                for(let k=0;k<result.english_words.length;k++) {
+                    const english = result.english_words[k]
+                    if(otherVocabMeanings.includes(english)) {
+                        result.japanese_words.push(otherVocab.data.characters)
+                        break
+                    }
+                }
+            }
+        }
+        kaniWani.push(result)
+    }
+    let duplicateIndices: Array<number> = []
+    for(let i=0;i<kaniWani.length;i++) {
+        if(duplicateIndices.includes(i)) continue
+
+        const question = kaniWani[i].english_words.join(', ')
+        for(let j=0;j<kaniWani.length;j++) {
+            if(i!=j) {
+                const otherQuestion = kaniWani[j].english_words.join(', ')
+                if(question == otherQuestion) {
+                    duplicateIndices.push(j)
+                }
+            }
+        }
+    }
+    kaniWani = kaniWani.filter((value, index) => {
+        return !duplicateIndices.includes(index)
+    })
+    console.log('...done!\n')
 
 
     // Creating CSV files
     console.log('Generating and writing decks...')
 
-    const radicalMeaningCSV = createCSV([], [], [], [], radicalMeaningSubjects)
-    const kanjiMeaningCSV = createCSV(kanjiMeaningSubjects, [], [], [], [])
-    const kanjiReadingCSV = createCSV([], kanjiReadingSubjects, [], [], [])
-    const vocabularyMeaningCSV = createCSV([], [], vocabularyMeaningSubjects, [], [])
-    const vocabularyReadingCSV = createCSV([], [], [], vocabularyReadingSubjects, [])
+    const radicalMeaningCSV = createCSV([], [], [], [], radicalMeaningSubjects, [])
+    const kanjiMeaningCSV = createCSV(kanjiMeaningSubjects, [], [], [], [], [])
+    const kanjiReadingCSV = createCSV([], kanjiReadingSubjects, [], [], [], [])
+    const vocabularyMeaningCSV = createCSV([], [], vocabularyMeaningSubjects, [], [], [])
+    const vocabularyReadingCSV = createCSV([], [], [], vocabularyReadingSubjects, [], [])
+    const kaniWaniCSV = createCSV([],[],[],[],[],kaniWani)
 
     await fs.promises.writeFile('RadicalMeanings.csv', radicalMeaningCSV)
     await fs.promises.writeFile('KanjiMeanings.csv', kanjiMeaningCSV)
     await fs.promises.writeFile('KanjiReadings.csv', kanjiReadingCSV)
     await fs.promises.writeFile('VocabularyMeanings.csv', vocabularyMeaningCSV)
     await fs.promises.writeFile('VocabularyReadings.csv', vocabularyReadingCSV)
+    await fs.promises.writeFile('KaniWani.csv', kaniWaniCSV)
 
     console.log('...Done!\n')
 
@@ -504,6 +567,11 @@ async function main() {
     if(readingDecks.length > 0) {
         console.log('Command to review readings:')
         console.log(`k!quiz ${readingDecks.join('+')}  ${kotobaQuizSettings}\n\n`)
+    }
+
+    if(kaniWani.length > 0) {
+        console.log('Command to review 20 Kani-Wani words:')
+        console.log('k!quiz kw 20 hardcore atl=30 dauq=40 daaq=0 aaww=0\n\n')
     }
 }
 main()
