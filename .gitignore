@@ -2,5 +2,8 @@ dist/
 node_modules/
 token.json
 cache/
-WaniKaniLeeches.csv
-WaniKaniLevelOne.csv
+RadicalMeanings.csv
+KanjiMeanings.csv
+KanjiReadings.csv
+VocabularyMeanings.csv
+VocabularyReadings.csv

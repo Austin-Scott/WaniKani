@@ -293,22 +293,22 @@ const csvHeader = 'Question,Answers,Comment,Instructions,Render as\n'
 function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>, kanjiReadingSubjects: Array<Resource<Subject & KanjiSubject>>, vocabularyMeaningSubjects: Array<Resource<Subject & VocabularySubject>>, vocabularyReadingSubjects: Array<Resource<Subject & VocabularySubject>>, radicalMeaningSubjects: Array<Resource<Subject & RadicalSubject>>): string {
     let csvString = csvHeader
     kanjiMeaningSubjects.forEach(subject => {
-        csvString += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this Kanji?', true)
+        csvString += csvLine(subject.data.characters, subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the *meaning* of this **Kanji**?', true)
     })
     kanjiReadingSubjects.forEach(subject => {
-        csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this Kanji?', true)
+        csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this kanji on WaniKani: <${subject.data.document_url}>`, 'What is the *reading* of this **Kanji**?', true)
     })
     vocabularyMeaningSubjects.forEach(subject => {
-        csvString += csvLine('「'+subject.data.characters+'」', subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this vocabulary word?', true)
+        csvString += csvLine(subject.data.characters, subject.data.meanings.map(meaning => { return meaning.meaning }), `Readings: ${subject.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the *meaning* of this **vocabulary word**?', true)
     })
     vocabularyReadingSubjects.forEach(subject => {
-        csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the **reading** of this vocabulary word?', true)
+        csvString += csvLine(subject.data.characters, subject.data.readings.map(reading => { return reading.reading }), `Meanings: ${subject.data.meanings.map(meaning => meaning.meaning).join(', ')}\nView this vocabulary word on WaniKani: <${subject.data.document_url}>`, 'What is the *reading* of this **vocabulary word**?', true)
     })
     radicalMeaningSubjects.forEach(subject => {
         if(subject.data.characters == null) {
-            csvString += csvLine(subject.data.character_images.filter(image => image.content_type == 'image/png')[0].url, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this radical?', false)
+            csvString += csvLine(subject.data.character_images.filter(image => image.content_type == 'image/png')[0].url, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the *meaning* of this **radical**?', false)
         } else {
-            csvString += csvLine(subject.data.characters, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the **meaning** of this radical?', true)
+            csvString += csvLine(subject.data.characters, subject.data.meanings.map(meaning => { return meaning.meaning }), `View this radical on WaniKani: <${subject.data.document_url}>`, 'What is the *meaning* of this **radical**?', true)
         }
     })
     return csvString
@@ -442,16 +442,68 @@ async function main() {
     console.log(`...${levelOneRadicalSubjects.length} level one radical subjects retrieved...`)
     console.log('...Done!\n')
 
+    const radicalMeaningSubjects = levelOneRadicalSubjects.concat(leechRadicalMeaningSubjects) as Array<Resource<Subject & RadicalSubject>>
+    console.log(`${radicalMeaningSubjects.length} radicals meanings need extra review.`)
+
+    const kanjiMeaningSubjects = levelOneKanjiSubjects.concat(leechKanjiMeaningSubjects) as Array<Resource<Subject & KanjiSubject>>
+    console.log(`${kanjiMeaningSubjects.length} Kanji meanings need extra review.`)
+    
+    const kanjiReadingSubjects = levelOneKanjiSubjects.concat(leechKanjiReadingSubjects) as Array<Resource<Subject & KanjiSubject>>
+    console.log(`${kanjiReadingSubjects.length} Kanji readings need extra review.`)
+
+    const vocabularyMeaningSubjects = levelOneVocabularySubjects.concat(leechVocabularyMeaningSubjects) as Array<Resource<Subject & VocabularySubject>>
+    console.log(`${vocabularyMeaningSubjects.length} vocabulary meanings need extra review.`)
+    
+    const vocabularyReadingSubjects = levelOneVocabularySubjects.concat(leechVocabularyReadingSubjects) as Array<Resource<Subject & VocabularySubject>>
+    console.log(`${vocabularyReadingSubjects.length} vocabulary readings need extra review.`)
+
 
     // Creating CSV files
     console.log('Generating and writing decks...')
 
-    let leechReviewCSV = createCSV(leechKanjiMeaningSubjects, leechKanjiReadingSubjects, leechVocabularyMeaningSubjects, leechVocabularyReadingSubjects, leechRadicalMeaningSubjects)
-    let levelOneReviewCSV = createCSV(levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneKanjiSubjects as Array<Resource<Subject & KanjiSubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>, levelOneVocabularySubjects as Array<Resource<Subject & VocabularySubject>>, levelOneRadicalSubjects as Array<Resource<Subject & RadicalSubject>>)
+    const radicalMeaningCSV = createCSV([], [], [], [], radicalMeaningSubjects)
+    const kanjiMeaningCSV = createCSV(kanjiMeaningSubjects, [], [], [], [])
+    const kanjiReadingCSV = createCSV([], kanjiReadingSubjects, [], [], [])
+    const vocabularyMeaningCSV = createCSV([], [], vocabularyMeaningSubjects, [], [])
+    const vocabularyReadingCSV = createCSV([], [], [], vocabularyReadingSubjects, [])
 
-    await fs.promises.writeFile('WaniKaniLeeches.csv', leechReviewCSV)
-    await fs.promises.writeFile('WaniKaniLevelOne.csv', levelOneReviewCSV)
+    await fs.promises.writeFile('RadicalMeanings.csv', radicalMeaningCSV)
+    await fs.promises.writeFile('KanjiMeanings.csv', kanjiMeaningCSV)
+    await fs.promises.writeFile('KanjiReadings.csv', kanjiReadingCSV)
+    await fs.promises.writeFile('VocabularyMeanings.csv', vocabularyMeaningCSV)
+    await fs.promises.writeFile('VocabularyReadings.csv', vocabularyReadingCSV)
 
     console.log('...Done!\n')
+
+    const kotobaQuizSettings = 'conquest hardcore atl=30 dauq=40 daaq=0 aaww=0'
+
+    let meaningsDecks: Array<string> = []
+    if(radicalMeaningSubjects.length > 0) {
+        meaningsDecks.push('rm')
+    }
+    if(kanjiMeaningSubjects.length > 0) {
+        meaningsDecks.push('km')
+    }
+    if(vocabularyMeaningSubjects.length > 0) {
+        meaningsDecks.push('vm')
+    }
+
+    if(meaningsDecks.length > 0) {
+        console.log('Command to review meanings:')
+        console.log(`k!quiz ${meaningsDecks.join('+')}  ${kotobaQuizSettings}\n\n`)
+    }
+
+    let readingDecks: Array<string> = []
+    if(kanjiReadingSubjects.length > 0) {
+        readingDecks.push('kr')
+    }
+    if(vocabularyReadingSubjects.length > 0) {
+        readingDecks.push('vr')
+    }
+
+    if(readingDecks.length > 0) {
+        console.log('Command to review readings:')
+        console.log(`k!quiz ${readingDecks.join('+')}  ${kotobaQuizSettings}\n\n`)
+    }
 }
 main()
