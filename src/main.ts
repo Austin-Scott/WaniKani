@@ -318,7 +318,7 @@ function createCSV(kanjiMeaningSubjects: Array<Resource<Subject & KanjiSubject>>
         }
     })
     kaniWanis.forEach(kaniWani => {
-        csvString += csvLine(kaniWani.english_words.length == 1 ? kaniWani.english_words[0] : '"'+kaniWani.english_words.join(', ')+'"', kaniWani.japanese_words, `Readings: ${kaniWani.primary_answer.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${kaniWani.primary_answer.data.document_url}>`, 'Translate the following into a Japanese word.', false)
+        csvString += csvLine(kaniWani.english_words.length == 1 ? '**'+kaniWani.english_words[0]+'**' : '"**'+kaniWani.english_words.join('**, **')+'**"', kaniWani.japanese_words, `Readings: ${kaniWani.primary_answer.data.readings.map(reading => reading.reading).join(', ')}\nView this vocabulary word on WaniKani: <${kaniWani.primary_answer.data.document_url}>`, `"Parts of speech: *${kaniWani.primary_answer.data.parts_of_speech.join('*, *')}*"`, false)
     })
     return csvString
 }
@@ -480,14 +480,14 @@ async function main() {
     for(let i=0;i<enlightenedVocabularySubjects.length;i++) {
         const vocab = enlightenedVocabularySubjects[i]
         let result: KaniWani = {
-            japanese_words: [vocab.data.characters],
+            japanese_words: [vocab.data.characters, vocab.data.readings[0].reading],
             primary_answer: vocab,
-            english_words: vocab.data.meanings.map(meaning => meaning.meaning).concat(vocab.data.auxiliary_meanings.map(meaning => meaning.meaning))
+            english_words: vocab.data.meanings.map(meaning => meaning.meaning)
         }
         for(let j=0;j<enlightenedVocabularySubjects.length;j++) {
             if(i!=j) {
                 const otherVocab = enlightenedVocabularySubjects[j]
-                const otherVocabMeanings = otherVocab.data.meanings.map(meaning => meaning.meaning).concat(otherVocab.data.auxiliary_meanings.map(meaning => meaning.meaning))
+                const otherVocabMeanings = otherVocab.data.meanings.map(meaning => meaning.meaning)
                 for(let k=0;k<result.english_words.length;k++) {
                     const english = result.english_words[k]
                     if(otherVocabMeanings.includes(english)) {
@@ -571,7 +571,7 @@ async function main() {
 
     if(kaniWani.length > 0) {
         console.log('Command to review 20 Kani-Wani words:')
-        console.log('k!quiz kw 20 hardcore atl=30 dauq=40 daaq=0 aaww=0\n\n')
+        console.log('k!quiz kw 20 hardcore atl=40 dauq=15 daaq=0 aaww=0\n\n')
     }
 }
 main()
